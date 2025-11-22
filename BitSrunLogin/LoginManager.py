@@ -1,8 +1,9 @@
 import base64
-
 import requests
-# import time
 import re
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from ._decorators import *
 
@@ -12,7 +13,7 @@ from .encryption.srun_base64 import *
 from .encryption.srun_xencode import *
 
 header = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) '
                   'Chrome/63.0.3239.26 Safari/537.36'
 }
 
@@ -28,41 +29,57 @@ class LoginManager:
         return base64.b64decode(s).decode()
 
     def __init__(self, **kwargs):
-        # urls
+        # 所有配置集中在 self.args 里
         self.args = {
-            # urls
-            'url': 'http://10.253.0.235',  # 主楼 http://10.253.0.237 , 寝室公寓http://10.253.0.235
-            # 'url': kwargs.get('url', 'http://10.253.0.235')
-            'url_login_page': "/",
+            # 基础 URL：主机即可，不带路径
+            'url': 'http://10.253.0.235',  # 会被 config.py 里的 url 覆盖
+
+            # 相对路径（后面根据 base url 拼）
+            'url_login_page': "/srun_portal_pc",        # 登录页 path
             'url_get_challenge_api': "/cgi-bin/get_challenge",
             'url_login_api': "/cgi-bin/srun_portal",
 
-            # other static parameters
+            # 认证参数
             'n': "200",
             'vtype': "1",
-            'ac_id': "3",  # 主楼有线校园网acid=1, 寝室公寓acid=3
+            'ac_id': "3",         # 主楼=1，宿舍=3
             'enc': "srun_bx1",
-            'domain': "@dx",  # 电信:"@dx", 移动:"@cmcc", 校园网:"@dx-uestc"
+            'domain': "@dx",      # 会被 config 里的 domain 覆盖
 
-            # tmp args,
+            # 临时参数
             'username': None,
             'password': None,
-            'ip': None
+            'ip': None,
         }
+
+        # 用户名/密码/IP 等直观属性
         self.username = None
         self.password = None
         self.ip = None
+
+        # 覆盖配置（包括 config.py 中的 url / ac_id / domain）
         self.args.update(kwargs)
-        self.args['url_login_page'] = self.args['url'] + self.args['url_login_page']
-        self.args['url_get_challenge_api'] = self.args['url'] + self.args['url_get_challenge_api']
-        self.args['url_login_api'] = self.args['url'] + self.args['url_login_api']
-        # for k, v in self.args.items():
-        #     self.__setattr__(k, v)
+
+        # 基础 host（去掉 query 和结尾 /）
+        base = self.args['url'].split('?')[0].rstrip('/')
+        ac_id = str(self.args.get('ac_id', '3'))
+
+        # 登录页使用和浏览器一致的地址：/srun_portal_pc?ac_id=3&theme=pro
+        self.args['url_login_page'] = f"{base}/srun_portal_pc?ac_id={ac_id}&theme=pro"
+        self.args['url_get_challenge_api'] = f"{base}{self.args['url_get_challenge_api']}"
+        self.args['url_login_api'] = f"{base}{self.args['url_login_api']}"
+
+        # 会话对象：用它来保持 cookie
+        self.session = requests.Session()
+        # 默认头
+        self.session.headers.update(header)
 
     def login(self, username, password, decode=False):
         if decode:
             username = LoginManager.decode(username)
             password = LoginManager.decode(password)
+
+        # 拼接运营商后缀
         self.username = str(username) + self.args['domain']
         self.password = str(password)
 
@@ -77,10 +94,13 @@ class LoginManager:
         print("----------------")
 
     def get_token(self):
+        """
+        Step2: 获取 challenge / token
+        """
         print("Step2: Get token by resolving challenge result.")
+        # 用已有的 _get_challenge + _resolve_token_from_challenge_response
         self._get_challenge()
         self._resolve_token_from_challenge_response()
-        print("----------------")
 
     def get_login_responce(self):
         print("Step3: Loggin and resolve response.")
@@ -103,8 +123,11 @@ class LoginManager:
         errorinfo="Failed to get login page, maybe the login page url is not correct"
     )
     def _get_login_page(self):
-        # Step1: Get login page
-        self._page_response = requests.get(self.args['url_login_page'], headers=header)
+        # Step1: Get login page（使用 session，以便保存 cookie）
+        self._page_response = self.session.get(
+            self.args['url_login_page'],
+            # 校园网是 http，这里 verify 无所谓；如果将来换 https 可以用 verify=False
+        )
 
     @checkvars(
         varlist="_page_response",
@@ -116,7 +139,53 @@ class LoginManager:
         errorinfo="Failed to resolve IP"
     )
     def _resolve_ip_from_login_page(self):
-        self.ip = re.search('id="user_ip" value="(.*?)"', self._page_response.text).group(1)
+        """
+        从登录页 HTML / JS 中解析 IP，并顺便解析 ServiceIP（仅打印，不改接口地址）
+        """
+        text = self._page_response.text
+        """
+# ===== 临时调试，把登录页 HTML 打出来看看 =====
+        print("===== login page raw html (first 1000 chars) =====")
+        print(text[:1000])
+        print("===================================================")
+        # ===============================================
+        """
+        ip = None
+
+        # 兼容旧版本 hidden input 写法
+        patterns = [
+            r'id=["\']user_ip["\']\s+value=["\'](.*?)["\']',
+            r'id=["\']online_ip["\']\s+value=["\'](.*?)["\']',
+            r'id=["\']v46ip["\']\s+value=["\'](.*?)["\']',
+        ]
+        for pat in patterns:
+            m = re.search(pat, text)
+            if m:
+                ip = m.group(1)
+                break
+
+        # 现版本：CONFIG 里  ip     : "10.20.1.141"
+        if ip is None:
+            m = re.search(r'\bip\s*:\s*"([^"]+)"', text)
+            if m:
+                ip = m.group(1)
+
+        if ip is None:
+            # 解析不到直接报错
+            # print(text[:1000])  # 调试时可打开
+            raise ValueError("Cannot resolve IP from login page")
+
+        self.ip = ip
+        print("Successfully resolve IP, ip =", self.ip)
+
+        # 从 CONFIG 里解析 ServiceIP，仅记录/打印，不再覆盖接口地址
+        m_srv = re.search(r'"ServiceIP"\s*:\s*"([^"]+)"', text)
+        if m_srv:
+            self.service_ip = m_srv.group(1).rstrip('/')
+            print("Resolve ServiceIP =", self.service_ip)
+        else:
+            self.service_ip = None
+            print("ServiceIP not found in CONFIG")
 
     @checkip
     @infomanage(
@@ -127,16 +196,47 @@ class LoginManager:
     )
     def _get_challenge(self):
         """
-        The 'get_challenge' request aims to ask the server to generate a token
+        按 HAR 抓到的方式请求 /cgi-bin/get_challenge
+        GET http://10.253.0.235/cgi-bin/get_challenge
+            ?callback=jQuery1102...
+            &username=202521040119@cmcc
+            &ip=10.20.1.141
+            &_=timestamp
         """
+        import time
+
+        ts = int(time.time() * 1000)
+        callback = f"jQuery{ts}"
+
         params_get_challenge = {
-            "callback": "jsonp1583251661367",  # This value can be any string, but cannot be absent
-            "username": self.username,
-            "ip": self.ip
+            "callback": callback,
+            "username": self.username,  # 已经是 "学号@cmcc"
+            "ip": self.ip,
+            "_": str(ts),
         }
 
-        self._challenge_response = requests.get(self.args['url_get_challenge_api'],
-                                                params=params_get_challenge, headers=header)
+        # 参考 HAR 设置部分 header（尤其是 Referer / X-Requested-With / Accept）
+        ch_headers = header.copy()
+        ch_headers.update({
+            "Referer": self.args['url_login_page'],
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "text/javascript, application/javascript, application/ecmascript, application/x-ecmascript, */*; q=0.01",
+        })
+
+        url = self.args['url_get_challenge_api']
+
+        print("DEBUG get_challenge URL:", url)
+        print("DEBUG get_challenge params:", params_get_challenge)
+
+        self._challenge_response = self.session.get(
+            url,
+            params=params_get_challenge,
+            headers=ch_headers,
+            # 校园网是 http，verify 不影响；若将来改为 https，有证书问题可加 verify=False
+        )
+
+        print("DEBUG get_challenge status:", self._challenge_response.status_code)
+        print("DEBUG get_challenge Content-Type:", self._challenge_response.headers.get("Content-Type"))
 
     @checkvars(
         varlist="_challenge_response",
@@ -148,7 +248,19 @@ class LoginManager:
         errorinfo="Failed to resolve token"
     )
     def _resolve_token_from_challenge_response(self):
-        self.token = re.search('"challenge":"(.*?)"', self._challenge_response.text).group(1)
+        text = self._challenge_response.text
+
+        # 调试：打印原始响应，方便你以后继续适配
+        print("===== challenge response raw text =====")
+        print(text)
+        print("=======================================")
+
+        # 一般 srun 返回的 JSON/JSONP 里会有 "challenge":"xxxx"
+        m = re.search(r'"challenge"\s*:\s*"([^"]+)"', text)
+        if not m:
+            raise ValueError("Cannot resolve token from challenge response")
+
+        self.token = m.group(1)
 
     @checkip
     def _generate_info(self):
@@ -212,8 +324,7 @@ class LoginManager:
     )
     def _send_login_info(self):
         login_info_params = {
-            'callback': 'jQuery112407481914773997063_1631531125398',
-            # This value can be any string, but cannot be absent
+            'callback': 'jQuery112407481914773997063_1631531125398',  # 可任意字符串，但不能缺
             'action': 'login',
             'username': self.username,
             'password': self.encrypted_md5,
@@ -227,7 +338,12 @@ class LoginManager:
             'name': "Windows",
             'double_stack': 0
         }
-        self._login_responce = requests.get(self.args['url_login_api'], params=login_info_params, headers=header)
+        self._login_responce = requests.get(
+            self.args['url_login_api'],
+            params=login_info_params,
+            headers=header,
+            verify=False,
+        )
 
     @checkvars(
         varlist="_login_responce",

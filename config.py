@@ -12,7 +12,7 @@ login_options = {
     'user': User('202521040119', 'fzmdxb666@', 'None'),  # 填上学号密码
 
     # 认证页面的地址
-    'url': "http://10.253.0.235",  # 寝室公寓http://aaa.uestc.edu.cn  http://10.253.0.235
+    'url': "http://10.253.0.235/",  # 寝室公寓http://aaa.uestc.edu.cn  http://10.253.0.235
     # 'url': "http://10.253.0.237",  # 主楼 http://10.253.0.237
 
     # 认证页面的地址里的参数ac_id=???
