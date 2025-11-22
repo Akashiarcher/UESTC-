@@ -5,11 +5,13 @@ from collections import namedtuple
 User = namedtuple('User', ['user_id', 'passwd', 'wechat_openid'])
 
 # 登录校园网/寝室宽带的用户账号(学号, 登录教务处的密码, None)
+#  发布到公开仓库时不要提交真实账号密码。
 #  例如： User('202912272625', '123456Abc@#$', None)
 
 
 login_options = {
-    'user': User('<REMOVED>', '<REMOVED>', 'None'),  # 填上学号密码
+    # 将下面的示例替换为自己的账号、密码和可选的微信 openid
+    'user': User('', '', None),  # 填上学号密码
 
     # 认证页面的地址
     'url': "http://10.253.0.235/",  # 寝室公寓http://aaa.uestc.edu.cn  http://10.253.0.235
