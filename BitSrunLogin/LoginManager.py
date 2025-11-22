@@ -225,18 +225,12 @@ class LoginManager:
 
         url = self.args['url_get_challenge_api']
 
-        print("DEBUG get_challenge URL:", url)
-        print("DEBUG get_challenge params:", params_get_challenge)
-
         self._challenge_response = self.session.get(
             url,
             params=params_get_challenge,
             headers=ch_headers,
             # 校园网是 http，verify 不影响；若将来改为 https，有证书问题可加 verify=False
         )
-
-        print("DEBUG get_challenge status:", self._challenge_response.status_code)
-        print("DEBUG get_challenge Content-Type:", self._challenge_response.headers.get("Content-Type"))
 
     @checkvars(
         varlist="_challenge_response",
@@ -249,11 +243,6 @@ class LoginManager:
     )
     def _resolve_token_from_challenge_response(self):
         text = self._challenge_response.text
-
-        # 调试：打印原始响应，方便你以后继续适配
-        print("===== challenge response raw text =====")
-        print(text)
-        print("=======================================")
 
         # 一般 srun 返回的 JSON/JSONP 里会有 "challenge":"xxxx"
         m = re.search(r'"challenge"\s*:\s*"([^"]+)"', text)
@@ -356,7 +345,6 @@ class LoginManager:
     )
     def _resolve_login_responce(self):
         self._login_result = re.search('"error":"(.*?)"', self._login_responce.text).group(1)
-        print(self._login_responce.text)
 
 
 if __name__ == '__mian__':
