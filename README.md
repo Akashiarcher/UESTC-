@@ -13,8 +13,11 @@
 
 
 ### 抄的！抄的！抄的！抄的！
-以下是原主的readme，https://github.com/b71db892/AutoLoginUESTC
-介于上一次维护已经是3年前了，我直接接手修补了，主要的修补都是针对BIT-srun-login-script，不过可能那个库本身已经做了更新了。anyway，能用就行！
+- 以下是原主的readme，https://github.com/b71db892/AutoLoginUESTC
+
+- 介于上一次维护已经是3年前了，我直接接手修补了，主要的修补都是针对BIT-srun-login-script，不过可能那个库本身已经做了更新了。anyway，能用就行！
+
+- 大家调试好了可以自己写一个bat放到自启动里，或者用taskscheduler开机触发
 
 ### 搞这干啥？
 - 学校的电信宽带自动掉线太频繁了，移动的稍好一点但也不行（尊贵的移动还屏蔽了游戏串流软件，真是谢谢你）
